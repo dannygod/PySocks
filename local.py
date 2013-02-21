@@ -13,7 +13,6 @@ import sys
 import os
 import json
 import logging
-import getopt
 import time
 import traceback
 try:
@@ -106,13 +105,15 @@ class Common(object):
         self.SOCKS5_SERVER           = self.CONFIG['server']
         self.SOCKS5_SERVER_PORT      = self.CONFIG['server_port']
 
+        self.CONFIG_FILE.close()
+
     def info(self):
         info = ''
         info += '------------------------------------------------------\n'
         info += 'ShadowSocks Version    : %s (python/%s pyopenssl/%s)\n' % (__version__, sys.version.partition(' ')[0], (OpenSSL.version.__version__ if OpenSSL else 'Disabled'))
-        info += 'Listen Address     : %s:%d\n' % (self.LISTEN_IP, self.LISTEN_PORT)
-        info += 'Debug INFO         : %s\n' % self.LISTEN_DEBUGINFO if self.LISTEN_DEBUGINFO else ''
-        info += 'SOCKS5 Listen      : %s:%d\n' % (self.SOCKS5_SERVER, self.SOCKS5_SERVER_PORT)
+        info += 'Listen Address         : %s:%d\n' % (self.LISTEN_IP, self.LISTEN_PORT)
+        info += 'Debug INFO             : %s\n' % self.LISTEN_DEBUGINFO if self.LISTEN_DEBUGINFO else ''
+        info += 'SOCKS5 Listen          : %s:%d\n' % (self.SOCKS5_SERVER, self.SOCKS5_SERVER_PORT)
         info += '------------------------------------------------------\n'
         return info
 
@@ -234,42 +235,32 @@ def main():
     if os.path.islink(__file__):
         __file__ = getattr(os, 'readlink', lambda x:x)(__file__)
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
     logging.basicConfig(level=logging.DEBUG if common.LISTEN_DEBUGINFO else logging.INFO, format='%(levelname)s - %(asctime)s %(message)s', datefmt='[%b %d %H:%M:%S]')
+
     pre_start()
     sys.stdout.write(common.info())
+
+
+    try:
+        server = ThreadingTCPServer(('', common.LISTEN_PORT), Socks5Server)
+        server.allow_reuse_address = True
+        logging.info("starting server at port %d ..." % common.LISTEN_PORT)
+        server.serve_forever()
+    except socket.error, e:
+        logging.error(e)
 #    server = gevent.server.StreamServer((common.LISTEN_IP, common.LISTEN_PORT), socks5proxy_handler)
 #    server.serve_forever()
 
 if __name__ == '__main__':
-    main()
-    with open('config.json', 'rb') as f:
-        config = json.load(f)
-    SERVER = config['server']
-    REMOTE_PORT = config['server_port']
-    PORT = config['local_port']
-    KEY = config['password']
-
-    optlist, args = getopt.getopt(sys.argv[1:], 's:p:k:l:')
-    for key, value in optlist:
-        if key == '-p':
-            REMOTE_PORT = int(value)
-        elif key == '-k':
-            KEY = value
-        elif key == '-l':
-            PORT = int(value)
-        elif key == '-s':
-            SERVER = value
-
-#    logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)-8s %(message)s',
-#        datefmt='%Y-%m-%d %H:%M:%S', filemode='a+')
-
-    encrypt_table = ''.join(get_table(common.SOCKS5_PASSWORD))
-    decrypt_table = string.maketrans(encrypt_table, string.maketrans('', ''))
     try:
-        server = ThreadingTCPServer(('', PORT), Socks5Server)
-        server.allow_reuse_address = True
-        logging.info("starting server at port %d ..." % PORT)
-        server.serve_forever()
-    except socket.error, e:
-        logging.error(e)
+        encrypt_table = ''.join(get_table(common.SOCKS5_PASSWORD))
+        decrypt_table = string.maketrans(encrypt_table, string.maketrans('', ''))
 
+        main()
+    except KeyboardInterrupt:
+        pass
+    except Exception as e:
+        if ctypes and os.name == 'nt':
+            ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 1)
+        raise

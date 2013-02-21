@@ -1,0 +1,11 @@
+{
+    "ip":"127.0.0.1",
+    "local_port":1080,
+    "visible":1,
+    "debuginfo":0,
+
+    "server":"localhost",
+    "server_port":8388,
+    "password":"password",
+    "timeout":60
+}
