@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -*- Encoding: utf-8 -*-
+# coding:utf-8
 
 # Copyright (c) 2012 clowwindy
 #
@@ -98,16 +98,16 @@ class Socks5Server(SocketServer.StreamRequestHandler):
             pass
 
 def getConfig():
-    __fd = open('config')
+    __fd = open('config', 'rb')
     __raw_data = __fd.read()
     __fd.close()
     __data = eval(__raw_data, {'__builtins__': None}, None)
-    return __data['server'], __data['server_port'], __data['password']
+    return __data['server_port'], __data['password']
 
 if __name__ == '__main__':
     os.chdir(os.path.dirname(__file__) or '.')
 
-    SERVER, PORT, KEY = getConfig()
+    PORT, KEY = getConfig()
 
     optlist, args = getopt.getopt(sys.argv[1:], 'p:k:')
     for key, value in optlist:

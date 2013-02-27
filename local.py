@@ -11,7 +11,6 @@ import string
 import hashlib
 import sys
 import os
-import json
 import logging
 import time
 import traceback
@@ -91,21 +90,23 @@ class Common(object):
     """Global Config Object"""
 
     def __init__(self):
-        """load config from config.json"""
-        self.CONFIG_FILENAME = 'config.json'
-        self.CONFIG_FILE = open(self.CONFIG_FILENAME, 'rb')
-        self.CONFIG = json.load(self.CONFIG_FILE)
+        """load config from config"""
+        __fd = open('config', 'rb')
+        __raw_data = __fd.read()
+        __fd.close()
 
+        self.CONFIG = eval(__raw_data, {'__builtins__': None}, None)
+
+        #listen
         self.LISTEN_IP            = self.CONFIG['ip']
         self.LISTEN_PORT          = self.CONFIG['local_port']
         self.LISTEN_VISIBLE       = self.CONFIG['visible']
         self.LISTEN_DEBUGINFO     = self.CONFIG['debuginfo'] if self.CONFIG.has_key('debuginfo') else 0
 
-        self.SOCKS5_PASSWORD         = self.CONFIG['password']
+        #server info
         self.SOCKS5_SERVER           = self.CONFIG['server']
         self.SOCKS5_SERVER_PORT      = self.CONFIG['server_port']
-
-        self.CONFIG_FILE.close()
+        self.SOCKS5_PASSWORD         = self.CONFIG['password']
 
     def info(self):
         info = ''
@@ -113,7 +114,7 @@ class Common(object):
         info += 'ShadowSocks Version    : %s (python/%s pyopenssl/%s)\n' % (__version__, sys.version.partition(' ')[0], (OpenSSL.version.__version__ if OpenSSL else 'Disabled'))
         info += 'Listen Address         : %s:%d\n' % (self.LISTEN_IP, self.LISTEN_PORT)
         info += 'Debug INFO             : %s\n' % self.LISTEN_DEBUGINFO if self.LISTEN_DEBUGINFO else ''
-        info += 'SOCKS5 Listen          : %s:%d\n' % (self.SOCKS5_SERVER, self.SOCKS5_SERVER_PORT)
+        info += 'SOCKS5 Server          : %s:%d\n' % (self.SOCKS5_SERVER, self.SOCKS5_SERVER_PORT)
         info += '------------------------------------------------------\n'
         return info
 
