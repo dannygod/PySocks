@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- Encoding: utf-8 -*-
 
 # Copyright (c) 2012 clowwindy
 #
@@ -29,7 +30,6 @@ import string
 import hashlib
 import sys
 import os
-import json
 import logging
 import getopt
 
@@ -97,15 +97,17 @@ class Socks5Server(SocketServer.StreamRequestHandler):
             #logging.warn(e)
             pass
 
+def getConfig():
+    __fd = open('config')
+    __raw_data = __fd.read()
+    __fd.close()
+    __data = eval(__raw_data, {'__builtins__': None}, None)
+    return __data['server'], __data['server_port'], __data['password']
+
 if __name__ == '__main__':
     os.chdir(os.path.dirname(__file__) or '.')
 
-    with open('config.json', 'rb') as f:
-        config = json.load(f)
-
-    SERVER = config['server']
-    PORT = config['server_port']
-    KEY = config['password']
+    SERVER, PORT, KEY = getConfig()
 
     optlist, args = getopt.getopt(sys.argv[1:], 'p:k:')
     for key, value in optlist:
