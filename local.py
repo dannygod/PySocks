@@ -199,12 +199,12 @@ class Socks5Server(SocketServer.StreamRequestHandler):
                 remote.connect((common.SOCKS5_SERVER, common.SOCKS5_SERVER_PORT))
                 self.send_encrypt(remote, addr_to_send)
                 logging.info('connecting %s:%d' % (addr, port[0]))
-            except socket.error, e:
-                logging.warn(e)
+            except socket.error as e:
+                logging.error('socket.error %s in send' % e)
                 return
             self.handle_tcp(sock, remote)
-        except socket.error, e:
-            logging.warn(e)
+        except socket.error as e:
+            logging.error('socket.error %s (Do you set up a wrong password?)' % e)
 
 def pre_start():
     if sys.platform == 'cygwin':
