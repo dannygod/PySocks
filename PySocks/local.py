@@ -179,7 +179,9 @@ def main():
         __file__ = getattr(os, 'readlink', lambda x:x)(__file__)
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-    logging.basicConfig(level=logging.DEBUG if common.LISTEN_DEBUGINFO else logging.INFO, format='%(levelname)s - %(asctime)s %(message)s', datefmt='[%b %d %H:%M:%S]')
+    logging.basicConfig(level=logging.DEBUG if common.LISTEN_DEBUGINFO else logging.INFO,
+                        format='%(levelname)s - %(asctime)s %(message)s',
+                        datefmt='[%b %d %H:%M:%S]')
 
     pre_start()
     sys.stdout.write(common.info())

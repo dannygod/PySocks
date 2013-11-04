@@ -14,6 +14,7 @@ except ImportError:
 
 
 class Logging(type(sys)):
+    NOLOGGING = 100
     CRITICAL = 50
     FATAL = CRITICAL
     ERROR = 40
@@ -49,6 +50,12 @@ class Logging(type(sys)):
         self.level = kwargs.get('level', self.__class__.INFO)
         if self.level > self.__class__.DEBUG:
             self.debug = self.dummy
+        if self.level == self.__class__.NOLOGGING:
+            self.debug = self.dummy
+            self.info = self.dummy
+            self.warning = self.dummy
+            self.error = self.dummy
+            self.critical = self.dummy
     def log(self, level, fmt, *args, **kwargs):
         self.__write('%s - - [%s] %s\n' % (level, time.ctime()[4:-5], fmt%args))
     def dummy(self, *args, **kwargs):

@@ -126,8 +126,9 @@ class Socks5Server(SocketServer.StreamRequestHandler):
             logging.warn(e)
 
 def main():
-    #logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)-8s %(message)s',
-    #    datefmt='%Y-%m-%d %H:%M:%S', filemode='a+')
+    logging.basicConfig(common.LISTEN_DEBUGINFO,
+                        format='%(levelname)s - %(asctime)s %(message)s',
+                        datefmt='[%b %d %H:%M:%S]')
     encrypt.init_table(common.SOCKS5_PASSWORD, common.SOCKS5_ENCRYPT_METHOD)
     # not support ipv6 now.
     #if IPv6:
