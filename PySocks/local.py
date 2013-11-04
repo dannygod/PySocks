@@ -141,11 +141,11 @@ class Socks5Server(SocketServer.StreamRequestHandler):
                 self.send_encrypt(remote, addr_to_send)
                 logging.info('connecting %s:%d' % (addr, port[0]))
             except socket.error, e:
-                logging.warn(e)
+                logging.warn('%s' % e)
                 return
             self.handle_tcp(sock, remote)
         except socket.error, e:
-            logging.warn(e)
+            logging.warn('%s' % e)
 
 
 def pre_start():
@@ -193,10 +193,10 @@ def main():
         #if IPv6:
         #    ThreadingTCPServer.address_family = socket.AF_INET6
         server = ThreadingTCPServer((common.LISTEN_IP, common.LISTEN_PORT), Socks5Server)
-        logging.info("starting local at %s:%d" % tuple(server.server_address[:2]))
+        logging.info('starting local at %s:%d' % tuple(server.server_address[:2]))
         server.serve_forever()
     except socket.error, e:
-        logging.error(e)
+        logging.error('%s' % e)
 
 if __name__ == '__main__':
     try:

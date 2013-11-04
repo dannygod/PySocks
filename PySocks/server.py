@@ -44,6 +44,7 @@ except ImportError:
     import encrypt
     import utils
 
+logging = sys.modules['logging'] = utils.Logging('logging')
 common = utils.Common()
 
 
@@ -119,14 +120,14 @@ class Socks5Server(SocketServer.StreamRequestHandler):
                 remote = socket.create_connection((addr, port[0]))
             except socket.error, e:
                 # Connection refused
-                logging.warn(e)
+                logging.warn('%s' % e)
                 return
             self.handle_tcp(sock, remote)
         except socket.error, e:
-            logging.warn(e)
+            logging.warn('%s' % e)
 
 def main():
-    logging.basicConfig(common.LISTEN_DEBUGINFO,
+    logging.basicConfig(level=common.LISTEN_DEBUGINFO,
                         format='%(levelname)s - %(asctime)s %(message)s',
                         datefmt='[%b %d %H:%M:%S]')
     encrypt.init_table(common.SOCKS5_PASSWORD, common.SOCKS5_ENCRYPT_METHOD)
@@ -134,11 +135,11 @@ def main():
     #if IPv6:
     #    ThreadingTCPServer.address_family = socket.AF_INET6
     try:
-        server = ThreadingTCPServer((common.SOCKS5_SERVER, common.SOCKS5_SERVER_PORT), Socks5Server)
+        server = ThreadingTCPServer(('', common.SOCKS5_SERVER_PORT), Socks5Server)
         logging.info("starting server at %s:%d" % tuple(server.server_address[:2]))
         server.serve_forever()
     except socket.error, e:
-        logging.error(e)
+        logging.error('%s' % e)
 
 
 if __name__ == '__main__':
