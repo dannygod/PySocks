@@ -3,4 +3,4 @@
 DIR=`dirname $0`
 cd "$DIR"
 
-nohup python server.py &
+nohup python PySocks/server.py > log &
