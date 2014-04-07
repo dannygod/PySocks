@@ -11,5 +11,5 @@
     'server_port': 8388,
     'password': 'password',
     'timeout': 60,
-    'method': 'table',
+    'method': 'table', # recommended aes-256-cfb
 }
