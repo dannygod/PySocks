@@ -1,11 +1,11 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-__version__ = '2.1.0'
+# Copyright (c) 2014 dannygod
+
 
 import os
 import sys
-import logging
 import time
 try:
   import ctypes
@@ -95,40 +95,3 @@ class Logging(type(sys)):
     self.__reset_color()
 
 
-class Common(object):
-  """Global Config Object"""
-  
-  def __init__(self):
-    """load config from config"""
-    with open('config') as f:
-        __raw_data = f.read()
-    
-    self.CONFIG = eval(__raw_data, {'__builtins__': None}, None)
-    
-    # listen
-    self.LISTEN_IP            = self.CONFIG['ip']
-    self.LISTEN_PORT          = self.CONFIG['local_port']
-    self.LISTEN_VISIBLE       = self.CONFIG['visible']
-    self.LISTEN_DEBUGINFO     = self.CONFIG['debuginfo'] if self.CONFIG.has_key('debuginfo') else 0
-    
-    # server info
-    self.SOCKS5_SERVER           = self.CONFIG['server']
-    self.SOCKS5_SERVER_PORT      = self.CONFIG['server_port']
-    self.SOCKS5_PASSWORD         = self.CONFIG['password']
-    self.SOCKS5_ENCRYPT_METHOD   = self.CONFIG['method']
-
-    self.TIMEOUT = self.CONFIG['timeout']
-    
-    # app version
-    self.VERSION = __version__
-  
-  def info(self):
-    info = ''
-    info += '------------------------------------------------------\n'
-    info += 'ShadowSocks Version    : %s (python/%s)\n' % (self.VERSION, sys.version.partition(' ')[0])
-    info += 'Listen Address         : %s:%d\n' % (self.LISTEN_IP, self.LISTEN_PORT)
-    info += 'Debug INFO             : %s\n' % self.LISTEN_DEBUGINFO if self.LISTEN_DEBUGINFO else ''
-    info += 'SOCKS5 Server          : %s:%d\n' % (self.SOCKS5_SERVER, self.SOCKS5_SERVER_PORT)
-    info += 'TimeOut                : %d\n' % self.TIMEOUT
-    info += '------------------------------------------------------\n'
-    return info
