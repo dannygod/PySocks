@@ -1,15 +1,16 @@
-#config
+# config
 {
-    #listen
-    'ip': '127.0.0.1',
-    'local_port': 1080,
-    'visible': 1,
-    'debuginfo': 0,
-
-    #server info
-    'server': 'localhost',
-    'server_port': 8388,
-    'password': 'password',
-    'timeout': 60,
-    'method': 'table', # recommended aes-256-cfb
+  # listen
+  'local': '127.0.0.1',
+  'local_port': 1080,
+  'verbose': 0,
+  
+  # server info
+  'server': '127.0.0.1',
+  'server_port': 8388,
+  'password': 'password',
+  'timeout': 300,
+  'method': 'table', # recommended aes-256-cfb
+  'fast_open': 0,
+  'workers': 10,
 }

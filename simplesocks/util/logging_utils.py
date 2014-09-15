@@ -52,7 +52,7 @@ class Logging(type(sys)):
   def basicConfig(self, *args, **kwargs):
     self.level = kwargs.get('level', self.__class__.INFO)
     if self.level > self.__class__.DEBUG:
-        self.debug = self.dummy
+      self.debug = self.dummy
     if self.level == self.__class__.NOLOGGING:
       self.debug = self.dummy
       self.info = self.dummy

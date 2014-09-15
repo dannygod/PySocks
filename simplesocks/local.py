@@ -22,157 +22,23 @@
 # SOFTWARE.
 
 import common
-import logging
 import os
-import select
-import socket
-import SocketServer
 import sys
+import signal
+import eventloop
+import tcprelay
+import udprelay
+import asyncdns
+from encrypt import encrypt
 from protocol import socks5
-from util import logging_utils
-try:
-  import gevent
-  import gevent.monkey
-  gevent.monkey.patch_all(dns=gevent.version_info[0] >= 1)
-except ImportError:
-  gevent = None
-  sys.stdout.write('warning: gevent not found, using threading instead')
-try:
-  import encrypt
-except ImportError:
-  sys.path.append(os.path.join(os.path.dirname(sys.argv[0])))
-  import encrypt
 try:
   import ctypes
 except ImportError:
   ctypes = None
 
-SCRIPT_FILE = None
 
-logging = sys.modules['logging'] = logging_utils.Logging('logging')
+logging = common.logging
 common = common.Common()
-
-
-def send_all(sock, data):
-  bytes_sent = 0
-  while True:
-    r = sock.send(data[bytes_sent:])
-    if r < 0:
-      return r
-    bytes_sent += r
-    if bytes_sent == len(data):
-      return bytes_sent
-
-
-class ThreadingTCPServer(SocketServer.ThreadingMixIn, SocketServer.TCPServer):
-  allow_reuse_address = False
-
-  def get_request(self):
-    connection = self.socket.accept()
-    connection[0].settimeout(common.TIMEOUT)
-    return connection
-
-
-class Socks5Server(SocketServer.StreamRequestHandler):
-  @staticmethod
-  def handle_tcp(sock, remote, encryptor, pending_data=None):
-    try:
-      fdset = [sock, remote]
-      while True:
-        should_break = False
-        r, w, e = select.select(fdset, [], [], common.TIMEOUT)
-
-        if not r:
-          logging.warn('read time out')
-          break
-
-        # see local socket
-        if sock in r:
-          # prepare data to send.
-          data = sock.recv(4096)
-          if pending_data:
-            data = pending_data + data
-            pending_data = None
-
-          # encrypt data
-          data = encryptor.encrypt(data)
-          if len(data) <= 0:
-            should_break = True
-          else:
-            result = send_all(remote, data)
-            if result < len(data):
-              raise Exception('failed to send all data to local')
-
-        # see remote socket
-        if remote in r:
-          data = encryptor.decrypt(remote.recv(4096))
-          if len(data) <= 0:
-            should_break = True
-          else:
-            result = send_all(sock, data)
-            if result < len(data):
-              raise Exception('failed to send all data to remote')
-
-        if should_break:
-          # make sure all data are read before we close the sockets
-          # TODO: we haven't read ALL the data, actually
-          # http://cs.ecs.baylor.edu/~donahoo/practical/CSockets/TCPRST.pdf
-          break
-
-    finally:
-      sock.close()
-      remote.close()
-
-  # Override for StreamRequestHandler.handle()
-  def setup(self):
-    SocketServer.StreamRequestHandler.setup(self)
-    self.encryptor = encrypt.Encryptor(common.SOCKS5_PASSWORD,
-                                       common.SOCKS5_ENCRYPT_METHOD)
-
-  # Override for BaseRequestHandler.handle()
-  def handle(self):
-    try:
-      sock = self.connection
-      sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-
-      data = sock.recv(262)
-      client_req_method = socks5.getClientRequestMethod(data)
-
-      if client_req_method == socks5.SOCKS5_METHOD_NO_AUTH:
-        sock.send(socks5.responseMethodToClient(socks5.SOCKS5_METHOD_NO_AUTH))
-      else:
-        logging.error('unsupported method %d' % client_req_method)
-        return
-
-      (cmd, addrtype, addr_to_send,
-       addr, port) = socks5.parseClientRequest(self.rfile)
-
-      if not cmd:
-        logging.error('unsupported cmd')
-        return
-      elif not addrtype:
-        logging.error('unsupported addr type')
-        return
-      else:
-        try:
-          reply = socks5.replyClientRequest()
-          self.wfile.write(reply)
-          # reply immediately
-          logging.info('connecting %s:%d' % (addr, port))
-          remote = socket.create_connection((common.SOCKS5_SERVER,
-                                             common.SOCKS5_SERVER_PORT),
-                                            timeout=common.TIMEOUT)
-          remote.settimeout(common.TIMEOUT)
-          remote.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-
-          Socks5Server.handle_tcp(sock, remote, self.encryptor, addr_to_send)
-        except (OSError, IOError, socket.timeout) as e:
-          logging.error('Error[%s] %s' % (addr, e))
-          return
-
-    except (OSError, IOError, socket.timeout) as e:
-      logging.error('Errors[%s] %s' % (addr, e))
-      raise e
 
 
 def pre_start():
@@ -207,13 +73,12 @@ def pre_start():
 
 
 def main():
-  global SCRIPT_FILE
   SCRIPT_FILE = os.path.abspath(__file__)
   if os.path.islink(SCRIPT_FILE):
     SCRIPT_FILE = getattr(os, 'readlink', lambda x:x)(SCRIPT_FILE)
   os.chdir(os.path.dirname(os.path.abspath(SCRIPT_FILE)))
 
-  logging.basicConfig(level=logging.DEBUG if common.LISTEN_DEBUGINFO else logging.INFO,
+  logging.basicConfig(level=logging.DEBUG if common.LISTEN_VERBOSE else logging.INFO,
                       format='%(levelname)s - %(asctime)s %(message)s',
                       datefmt='[%b %d %H:%M:%S]')
 
@@ -221,25 +86,38 @@ def main():
   sys.stdout.write(common.info())
 
   encrypt.init_table(common.SOCKS5_PASSWORD, common.SOCKS5_ENCRYPT_METHOD)
+  config = common.get_config()
 
   try:
-    # not support ipv6 now.
-    #if IPv6:
-    #    ThreadingTCPServer.address_family = socket.AF_INET6
-    server = ThreadingTCPServer((common.LISTEN_IP, common.LISTEN_PORT), Socks5Server)
-    server.timeout = common.TIMEOUT
-    logging.info('starting local at %s:%d' % tuple(server.server_address[:2]))
-    server.serve_forever()
-  except Exception as e:
-    logging.error('local server failed %s' % e)
+    logging.info('starting local at %s:%d' % (common.LISTEN_IP,
+                                              common.LISTEN_PORT))
+    dns_resolver = asyncdns.DNSResolver()
+    tcp_server = tcprelay.TCPRelay(config, dns_resolver, True)
+    udp_server = udprelay.UDPRelay(config, dns_resolver, True)
+    loop = eventloop.EventLoop()
+    dns_resolver.add_to_loop(loop)
+    tcp_server.add_to_loop(loop)
+    udp_server.add_to_loop(loop)
+
+    def handler(signum, _):
+      logging.warn('received SIGQUIT, doing graceful shutting down..')
+      tcp_server.close(next_tick=True)
+      udp_server.close(next_tick=True)
+    signal.signal(signal.SIGQUIT, handler)
+    loop.run()
+
+  except KeyboardInterrupt:
+    raise
+  except (IOError, OSError) as e:
+    logging.error(str(e))
+    if config['verbose']:
+      import traceback
+      traceback.print_exc()
+    if ctypes and os.name == 'nt':
+      ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(),
+                                      1)
+    raise
 
 
 if __name__ == '__main__':
-  try:
-    main()
-  except KeyboardInterrupt:
-    pass
-  except Exception as e:
-    if ctypes and os.name == 'nt':
-      ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 1)
-    raise
+  sys.exit(main())
