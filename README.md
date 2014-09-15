@@ -1,2 +1,2 @@
-PySocks
+simplesocks
 =======
