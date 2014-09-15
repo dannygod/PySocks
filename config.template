@@ -3,6 +3,7 @@
   # listen
   'local': '127.0.0.1',
   'local_port': 1080,
+  'visible': 0,
   'verbose': 0,
   
   # server info

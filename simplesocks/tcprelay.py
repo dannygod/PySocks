@@ -420,7 +420,7 @@ class TCPRelayHandler(object):
     def _on_local_error(self):
         logging.debug('got local error')
         if self._local_sock:
-            logging.error(eventloop.get_sock_error(self._local_sock))
+            logging.error(str(eventloop.get_sock_error(self._local_sock)))
         self.destroy()
 
     def _on_remote_error(self):

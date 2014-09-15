@@ -103,7 +103,7 @@ def main():
       logging.warn('received SIGQUIT, doing graceful shutting down..')
       tcp_server.close(next_tick=True)
       udp_server.close(next_tick=True)
-    signal.signal(signal.SIGQUIT, handler)
+    signal.signal(signal.SIGTERM, handler)
     loop.run()
 
   except KeyboardInterrupt:
