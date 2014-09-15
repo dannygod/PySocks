@@ -72,9 +72,9 @@ import socket
 import struct
 import errno
 import random
-import encrypt
 import eventloop
 import lru_cache
+from encrypt import encrypt
 
 logging = common.logging
 
