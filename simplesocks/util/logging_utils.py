@@ -25,9 +25,6 @@ class Logging(type(sys)):
   NOTSET = 0
 
   def __init__(self, *args, **kwargs):
-    self.level = self.__class__.INFO
-    if self.level > self.__class__.DEBUG:
-      self.debug = self.dummy
     self.__write = __write = sys.stderr.write
     self.isatty = getattr(sys.stderr, 'isatty', lambda:False)()
     self.__set_error_color = lambda:None
@@ -61,6 +58,8 @@ class Logging(type(sys)):
       self.critical = self.dummy
 
   def log(self, level, fmt, *args, **kwargs):
+    if type(fmt) is not str:
+      fmt = str(fmt)
     self.__write('%s - - [%s] %s\n' % (level, time.ctime()[4:-5], fmt%args))
 
   def dummy(self, *args, **kwargs):

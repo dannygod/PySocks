@@ -169,7 +169,7 @@ class TCPRelayHandler(object):
                             errno.EWOULDBLOCK):
                 uncomplete = True
             else:
-                logging.error(str(e))
+                logging.error(e)
                 if self._config['verbose']:
                     traceback.print_exc()
                 self.destroy()
@@ -204,7 +204,7 @@ class TCPRelayHandler(object):
                     self._create_remote_socket(self._chosen_server[0],
                                                self._chosen_server[1])
                 self._loop.add(remote_sock, eventloop.POLL_ERR)
-                data = ''.join(self._data_to_write_to_local)
+                data = b''.join(self._data_to_write_to_local)
                 l = len(data)
                 s = remote_sock.sendto(data, MSG_FASTOPEN, self._chosen_server)
                 if s < l:
@@ -223,7 +223,7 @@ class TCPRelayHandler(object):
                     self._config['fast_open'] = False
                     self.destroy()
                 else:
-                    logging.error(str(e))
+                    logging.error(e)
                     if self._config['verbose']:
                         traceback.print_exc()
                     self.destroy()
@@ -231,14 +231,14 @@ class TCPRelayHandler(object):
     def _handle_stage_hello(self, data):
         try:
             if self._is_local:
-                cmd = ord(data[1])
+                cmd = common.ord(data[1])
                 if cmd == CMD_UDP_ASSOCIATE:
                     logging.debug('UDP associate')
                     if self._local_sock.family == socket.AF_INET6:
-                        header = '\x05\x00\x00\x04'
+                        header = b'\x05\x00\x00\x04'
                     else:
-                        header = '\x05\x00\x00\x01'
-                    addr, port = self._local_sock.getsockname()
+                        header = b'\x05\x00\x00\x01'
+                    addr, port = self._local_sock.getsockname()[:2]
                     addr_to_send = socket.inet_pton(self._local_sock.family,
                                                     addr)
                     port_to_send = struct.pack('>H', port)
@@ -258,14 +258,16 @@ class TCPRelayHandler(object):
             if header_result is None:
                 raise Exception('can not parse header')
             addrtype, remote_addr, remote_port, header_length = header_result
-            logging.info('connecting %s:%d' % (remote_addr, remote_port))
+            logging.info('connecting %s:%d' % (common.to_str(remote_addr),
+                                               remote_port))
             self._remote_address = (remote_addr, remote_port)
             # pause reading
             self._update_stream(STREAM_UP, WAIT_STATUS_WRITING)
             self._stage = STAGE_DNS
             if self._is_local:
                 # forward address to remote
-                self._write_to_sock('\x05\x00\x00\x01\x00\x00\x00\x00\x10\x10',
+                self._write_to_sock((b'\x05\x00\x00\x01'
+                                     b'\x00\x00\x00\x00\x10\x10'),
                                     self._local_sock)
                 data_to_send = self._encryptor.encrypt(data)
                 self._data_to_write_to_remote.append(data_to_send)
@@ -279,7 +281,7 @@ class TCPRelayHandler(object):
                 self._dns_resolver.resolve(remote_addr,
                                            self._handle_dns_resolved)
         except Exception as e:
-            logging.error(str(e))
+            logging.error(e)
             if self._config['verbose']:
                 traceback.print_exc()
             # TODO use logging when debug completed
@@ -335,7 +337,7 @@ class TCPRelayHandler(object):
                         self._update_stream(STREAM_DOWN, WAIT_STATUS_READING)
                     return
                 except (OSError, IOError) as e:
-                    logging.error(str(e))
+                    logging.error(e)
                     if self._config['verbose']:
                         traceback.print_exc()
         self.destroy()
@@ -366,7 +368,7 @@ class TCPRelayHandler(object):
             return
         elif is_local and self._stage == STAGE_INIT:
             # TODO check auth method
-            self._write_to_sock('\x05\00', self._local_sock)
+            self._write_to_sock(b'\x05\00', self._local_sock)
             self._stage = STAGE_HELLO
             return
         elif self._stage == STAGE_REPLY:
@@ -394,7 +396,7 @@ class TCPRelayHandler(object):
         try:
             self._write_to_sock(data, self._local_sock)
         except Exception as e:
-            logging.error(str(e))
+            logging.error(e)
             if self._config['verbose']:
                 traceback.print_exc()
             # TODO use logging when debug completed
@@ -402,7 +404,7 @@ class TCPRelayHandler(object):
 
     def _on_local_write(self):
         if self._data_to_write_to_local:
-            data = ''.join(self._data_to_write_to_local)
+            data = b''.join(self._data_to_write_to_local)
             self._data_to_write_to_local = []
             self._write_to_sock(data, self._local_sock)
         else:
@@ -411,7 +413,7 @@ class TCPRelayHandler(object):
     def _on_remote_write(self):
         self._stage = STAGE_STREAM
         if self._data_to_write_to_remote:
-            data = ''.join(self._data_to_write_to_remote)
+            data = b''.join(self._data_to_write_to_remote)
             self._data_to_write_to_remote = []
             self._write_to_sock(data, self._remote_sock)
         else:
@@ -420,13 +422,13 @@ class TCPRelayHandler(object):
     def _on_local_error(self):
         logging.debug('got local error')
         if self._local_sock:
-            logging.error(str(eventloop.get_sock_error(self._local_sock)))
+            logging.error(eventloop.get_sock_error(self._local_sock))
         self.destroy()
 
     def _on_remote_error(self):
         logging.debug('got remote error')
         if self._remote_sock:
-            logging.error(str(eventloop.get_sock_error(self._remote_sock)))
+            logging.error(eventloop.get_sock_error(self._remote_sock))
         self.destroy()
 
     def handle_event(self, sock, event):
@@ -616,7 +618,7 @@ class TCPRelay(object):
                                     errno.EWOULDBLOCK):
                         continue
                     else:
-                        logging.error(str(e))
+                        logging.error(e)
                         if self._config['verbose']:
                             traceback.print_exc()
             else:

@@ -37,7 +37,7 @@ common = common.Common()
 
 
 def main():
-  logging.basicConfig(level=common.LISTEN_VERBOSE,
+  logging.basicConfig(level=logging.DEBUG if common.LISTEN_VERBOSE > 0 else logging.WARNING,
                       format='%(levelname)s - %(asctime)s %(message)s',
                       datefmt='[%b %d %H:%M:%S]')
   encrypt.init_table(common.SOCKS5_PASSWORD, common.SOCKS5_ENCRYPT_METHOD)
@@ -54,17 +54,18 @@ def main():
   def run_server():
     def child_handler(signum, _):
       logging.warn('received SIGQUIT, doing graceful shutting down..')
-      map(lambda s: s.close(next_tick=True), tcp_servers + udp_servers)
+      list(map(lambda s: s.close(next_tick=True),
+               tcp_servers + udp_servers))
     signal.signal(signal.SIGQUIT, child_handler)
     try:
       loop = eventloop.EventLoop()
       dns_resolver.add_to_loop(loop)
-      map(lambda s: s.add_to_loop(loop), tcp_servers + udp_servers)
+      list(map(lambda s: s.add_to_loop(loop), tcp_servers + udp_servers))
       loop.run()
     except KeyboardInterrupt:
       os._exit(1)
     except (IOError, OSError) as e:
-      logging.error(str(e))
+      logging.error(e)
       if config['verbose']:
         import traceback
         traceback.print_exc()
@@ -74,7 +75,7 @@ def main():
     if os.name == 'posix':
       children = []
       is_child = False
-      for i in xrange(0, int(config['workers'])):
+      for i in range(0, int(config['workers'])):
         r = os.fork()
         if r == 0:
           logging.info('worker started')

@@ -3,8 +3,8 @@
 
 # Copyright (c) 2014 dannygod
 
-__version__ = '3.0.0'
-
+from __future__ import absolute_import, division, print_function, \
+    with_statement
 
 import os
 import socket
@@ -14,6 +14,8 @@ from util import value_utils
 from util import logging_utils
 
 logging = sys.modules['logging'] = logging_utils.Logging('logging')
+
+__version__ = '3.0.0'
 
 
 class Common(object):
@@ -56,16 +58,51 @@ class Common(object):
     return self.CONFIG
 
 
+def compat_ord(s):
+  if type(s) == int:
+    return s
+  return _ord(s)
+
+
+def compat_chr(d):
+  if bytes == str:
+    return _chr(d)
+  return bytes([d])
+
+
+_ord = ord
+_chr = chr
+ord = compat_ord
+chr = compat_chr
+
+
+def to_bytes(s):
+  if bytes != str:
+    if type(s) == str:
+      return s.encode('utf-8')
+  return s
+
+
+def to_str(s):
+  if bytes != str:
+    if type(s) == bytes:
+      return s.decode('utf-8')
+  return s
+
+
 def inet_ntop(family, ipstr):
   if family == socket.AF_INET:
-    return socket.inet_ntoa(ipstr)
+    return to_bytes(socket.inet_ntoa(ipstr))
   elif family == socket.AF_INET6:
-    v6addr = ':'.join(('%02X%02X' % (ord(i), ord(j)))
+    import re
+    v6addr = ':'.join(('%02X%02X' % (ord(i), ord(j))).lstrip('0')
                       for i, j in zip(ipstr[::2], ipstr[1::2]))
-    return v6addr
+    v6addr = re.sub('::+', '::', v6addr, count=1)
+    return to_bytes(v6addr)
 
 
 def inet_pton(family, addr):
+  addr = to_str(addr)
   if family == socket.AF_INET:
     return socket.inet_aton(addr)
   elif family == socket.AF_INET6:
@@ -88,7 +125,7 @@ def inet_pton(family, addr):
           else:
             break
         break
-    return ''.join((chr(i // 256) + chr(i % 256)) for i in dbyts)
+    return b''.join((chr(i // 256) + chr(i % 256)) for i in dbyts)
   else:
     raise RuntimeError("What family?")
 
@@ -104,25 +141,25 @@ def patch_socket():
 patch_socket()
 
 
-
 ADDRTYPE_IPV4 = 1
 ADDRTYPE_IPV6 = 4
 ADDRTYPE_HOST = 3
 
 
 def pack_addr(address):
+  address_str = to_str(address)
   for family in (socket.AF_INET, socket.AF_INET6):
     try:
-      r = socket.inet_pton(family, address)
+      r = socket.inet_pton(family, address_str)
       if family == socket.AF_INET6:
-        return '\x04' + r
+        return b'\x04' + r
       else:
-        return '\x01' + r
+        return b'\x01' + r
     except (TypeError, ValueError, OSError, IOError):
       pass
   if len(address) > 255:
     address = address[:255]  # TODO
-  return '\x03' + chr(len(address)) + address
+  return b'\x03' + chr(len(address)) + address
 
 
 def parse_header(data):
@@ -158,7 +195,39 @@ def parse_header(data):
       logging.warn('header is too short')
   else:
     logging.warn('unsupported addrtype %d, maybe wrong password' %
-                 addrtype)
+                   addrtype)
   if dest_addr is None:
     return None
-  return addrtype, dest_addr, dest_port, header_length
+  return addrtype, to_bytes(dest_addr), dest_port, header_length
+
+
+def test_inet_conv():
+  ipv4 = b'8.8.4.4'
+  b = inet_pton(socket.AF_INET, ipv4)
+  assert inet_ntop(socket.AF_INET, b) == ipv4
+  ipv6 = b'2404:6800:4005:805::1011'
+  b = inet_pton(socket.AF_INET6, ipv6)
+  assert inet_ntop(socket.AF_INET6, b) == ipv6
+
+
+def test_parse_header():
+  assert parse_header(b'\x03\x0ewww.google.com\x00\x50') == \
+    (3, b'www.google.com', 80, 18)
+  assert parse_header(b'\x01\x08\x08\x08\x08\x00\x35') == \
+    (1, b'8.8.8.8', 53, 7)
+  assert parse_header((b'\x04$\x04h\x00@\x05\x08\x05\x00\x00\x00\x00\x00'
+                       b'\x00\x10\x11\x00\x50')) == \
+    (4, b'2404:6800:4005:805::1011', 80, 19)
+
+
+def test_pack_header():
+  assert pack_addr(b'8.8.8.8') == b'\x01\x08\x08\x08\x08'
+  assert pack_addr(b'2404:6800:4005:805::1011') == \
+    b'\x04$\x04h\x00@\x05\x08\x05\x00\x00\x00\x00\x00\x00\x10\x11'
+  assert pack_addr(b'www.google.com') == b'\x03\x0ewww.google.com'
+
+
+if __name__ == '__main__':
+  test_inet_conv()
+  test_parse_header()
+  test_pack_header()

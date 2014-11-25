@@ -147,7 +147,7 @@ class UDPRelay(object):
         if not data:
             logging.debug('UDP handle_server: data is empty')
         if self._is_local:
-            frag = ord(data[2])
+            frag = common.ord(data[2])
             if frag != 0:
                 logging.warn('drop a message since frag is not 0')
                 return
@@ -202,7 +202,7 @@ class UDPRelay(object):
             if err in (errno.EINPROGRESS, errno.EAGAIN):
                 pass
             else:
-                logging.error(str(e))
+                logging.error(e)
 
     def _handle_client(self, sock):
         data, r_addr = sock.recvfrom(BUF_SIZE)
@@ -228,7 +228,7 @@ class UDPRelay(object):
             if header_result is None:
                 return
             # addrtype, dest_addr, dest_port, header_length = header_result
-            response = '\x00\x00\x00' + data
+            response = b'\x00\x00\x00' + data
         client_addr = self._client_fd_to_server_addr.get(sock.fileno())
         if client_addr:
             self._server_socket.sendto(response, client_addr)

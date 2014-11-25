@@ -102,7 +102,7 @@ class KqueueLoop(object):
                 results[fd] |= POLL_IN
             elif e.filter == select.KQ_FILTER_WRITE:
                 results[fd] |= POLL_OUT
-        return results.iteritems()
+        return results.items()
 
     def add_fd(self, fd, mode):
         self._fds[fd] = mode
@@ -186,7 +186,7 @@ class EventLoop(object):
 
     def remove(self, f):
         fd = f.fileno()
-        self._fd_to_f[fd] = None
+        del self._fd_to_f[fd]
         self._impl.remove_fd(fd)
 
     def modify(self, f, mode):
@@ -229,7 +229,7 @@ class EventLoop(object):
                 try:
                     handler(events)
                 except (OSError, IOError) as e:
-                    logging.error(str(e))
+                    logging.error(e)
                     import traceback
                     traceback.print_exc()
             for handler in self._handlers_to_remove:

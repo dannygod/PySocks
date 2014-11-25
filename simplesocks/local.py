@@ -109,7 +109,7 @@ def main():
   except KeyboardInterrupt:
     raise
   except (IOError, OSError) as e:
-    logging.error(str(e))
+    logging.error(e)
     if config['verbose']:
       import traceback
       traceback.print_exc()

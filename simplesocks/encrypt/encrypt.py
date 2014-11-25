@@ -77,7 +77,7 @@ def init_table(key, method=None):
         try:
             Encryptor(key, method)  # test if the settings if OK
         except Exception as e:
-            logging.error(str(e))
+            logging.error(e)
             sys.exit(1)
 
 
