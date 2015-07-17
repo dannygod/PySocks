@@ -1,12 +1,21 @@
 ##INSTALL
 
+##Server
+
+###Linux
+
+####Downloads
+1. libsodium [^](https://github.com/jedisct1/libsodium/) if you need chacha20 or salsa20
+
+##Client
+
 ###Windows 64bits
 
 ####Downloads
 1. python 2.7 [^](https://www.python.org/downloads/)
-2. greenlet [^](https://pypi.python.org/pypi/greenlet)
-3. gevent [^](http://www.lfd.uci.edu/~gohlke/pythonlibs/#gevent)
-4. M2Crypto [^](http://chandlerproject.org/Projects/MeTooCrypto)
+2. openssl [^](https://slproweb.com/products/Win32OpenSSL.html)
+3. prebuit libsodium for windows [^](https://download.libsodium.org/libsodium/releases/)
 
 ####Install
-run install.bat
+1. copy libsodium.dll to a location that can be find in environment variable PATH.
+2. run install.bat

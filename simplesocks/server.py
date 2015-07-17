@@ -1,75 +1,86 @@
 #!/usr/bin/env python
-# coding:utf-8
-
-# Copyright (c) 2014 clowwindy modified by dannygod
+# -*- coding: utf-8 -*-
 #
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
+# Copyright 2015 clowwindy modified dannygod
 #
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
 #
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
 
+from __future__ import absolute_import, division, print_function, \
+    with_statement
 
-import common
+import __init__
 import os
 import sys
 import signal
-import eventloop
-import tcprelay
-import udprelay
-import asyncdns
-from encrypt import encrypt
 
+from simplesocks import common, eventloop, tcprelay, udprelay, asyncdns 
 logging = common.logging
 common = common.Common()
 
 
 def main():
-  logging.basicConfig(level=logging.DEBUG if common.LISTEN_VERBOSE > 0 else logging.WARNING,
+  logging.basicConfig(level=logging.DEBUG \
+                      if common.LISTEN_VERBOSE > 0 else logging.WARNING,
                       format='%(levelname)s - %(asctime)s %(message)s',
                       datefmt='[%b %d %H:%M:%S]')
-  encrypt.init_table(common.SOCKS5_PASSWORD, common.SOCKS5_ENCRYPT_METHOD)
   config = common.get_config()
+
+  if config.has_key('port_password') and config['port_password']:
+    if config.has_key('password') and config['password']:
+      logging.warn('warning: port_password should not be used with '
+                   'server_port and password. server_port and password '
+                   'will be ignored')
+  else:
+    config['port_password'] = {}
+    server_port = config['server_port']
+    if type(server_port) == list:
+      for a_server_port in server_port:
+        config['port_password'][a_server_port] = config['password']
+    else:
+      config['port_password'][str(server_port)] = config['password']
 
   tcp_servers = []
   udp_servers = []
   dns_resolver = asyncdns.DNSResolver()
-
-  # may support multi port
-  tcp_servers.append(tcprelay.TCPRelay(config, dns_resolver, False))
-  udp_servers.append(udprelay.UDPRelay(config, dns_resolver, False))
+  for port, password in config['port_password'].items():
+    a_config = config.copy()
+    a_config['server_port'] = int(port)
+    a_config['password'] = password
+    logging.info("starting server at %s:%d" %
+                 (a_config['server'], int(port)))
+    tcp_servers.append(tcprelay.TCPRelay(a_config, dns_resolver, False))
+    udp_servers.append(udprelay.UDPRelay(a_config, dns_resolver, False))
 
   def run_server():
     def child_handler(signum, _):
       logging.warn('received SIGQUIT, doing graceful shutting down..')
       list(map(lambda s: s.close(next_tick=True),
                tcp_servers + udp_servers))
-    signal.signal(signal.SIGQUIT, child_handler)
+    signal.signal(getattr(signal, 'SIGQUIT', signal.SIGTERM),
+                  child_handler)
+
+    def int_handler(signum, _):
+      sys.exit(1)
+    signal.signal(signal.SIGINT, int_handler)
+
     try:
       loop = eventloop.EventLoop()
       dns_resolver.add_to_loop(loop)
       list(map(lambda s: s.add_to_loop(loop), tcp_servers + udp_servers))
       loop.run()
-    except KeyboardInterrupt:
-      os._exit(1)
-    except (IOError, OSError) as e:
-      logging.error(e)
-      if config['verbose']:
-        import traceback
-        traceback.print_exc()
-      os._exit(1)
+    except Exception as e:
+      logging.exception(e, verbose=config['verbose'])
+      sys.exit(1)
 
   if int(config['workers']) > 1:
     if os.name == 'posix':
@@ -89,11 +100,13 @@ def main():
           for pid in children:
             try:
               os.kill(pid, signum)
+              os.waitpid(pid, 0)
             except OSError:  # child may already exited
               pass
           sys.exit()
         signal.signal(signal.SIGTERM, handler)
         signal.signal(signal.SIGQUIT, handler)
+        signal.signal(signal.SIGINT, handler)
 
         # master
         for a_tcp_server in tcp_servers:
@@ -114,5 +127,4 @@ def main():
 if __name__ == '__main__':
   os.chdir(os.path.dirname(__file__) or '.')
   sys.exit(main())
-
 

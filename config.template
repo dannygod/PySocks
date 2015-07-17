@@ -5,13 +5,31 @@
   'local_port': 1080,
   'visible': 0,
   'verbose': 0,
+  'remote_server_port': 8388,
+  'remote_server_password': 'password',
   
   # server info
   'server': '127.0.0.1',
-  'server_port': 8388,
-  'password': 'password',
   'timeout': 300,
-  'method': 'table', # recommended aes-256-cfb
+  'method': 'aes-256-cfb', # recommended rc4-md5
   'fast_open': 0,
   'workers': 10,
+  # password mode
+  # 1) single password with single server_port
+  #    Valid field: password(string), server_port(int)
+  #    Example:
+  #      'server_port': 8388,
+  #      'password': 'password',
+  # 2) single password with multi server_port
+  #    Valid field: password(string), server_port(list)
+  #    Example:
+  #      'server_port': [8388, 8389],
+  #      'password': 'password',
+  # 3) multi password with multi server_port
+  #    Valid field: port_password(map)
+  #    Example:
+  #      'port_password': {
+  #         8388: 'password1',
+  #         8389: 'password2',
+  #      },
 }

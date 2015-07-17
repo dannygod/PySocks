@@ -1,74 +1,89 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
+#
+# Copyright 2015 clowwindy modified by dannygod
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
 
-# Copyright (c) 2014 clowwindy
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
+from __future__ import absolute_import, division, print_function, \
+    with_statement
 
-import common
+import __init__
 import time
 import socket
 import errno
 import struct
-import traceback
 import random
-import eventloop
-from encrypt import encrypt
 
+from simplesocks import common, eventloop, encrypt
 logging = common.logging
 
+# we clear at most TIMEOUTS_CLEAN_SIZE timeouts each time
 TIMEOUTS_CLEAN_SIZE = 512
+
+# we check timeouts every TIMEOUT_PRECISION seconds
 TIMEOUT_PRECISION = 4
 
 MSG_FASTOPEN = 0x20000000
 
+# SOCKS command definition
 CMD_CONNECT = 1
 CMD_BIND = 2
 CMD_UDP_ASSOCIATE = 3
 
-# local:
-# stage 0 init
-# stage 1 hello received, hello sent
-# stage 2 UDP assoc
-# stage 3 DNS
-# stage 4 addr received, reply sent
-# stage 5 remote connected
+# for each opening port, we have a TCP Relay
 
-# remote:
-# stage 0 init
-# stage 3 DNS
-# stage 4 addr received, reply sent
-# stage 5 remote connected
+# for each connection, we have a TCP Relay Handler to handle the connection
+
+# for each handler, we have 2 sockets:
+#    local:   connected to the client
+#    remote:  connected to remote server
+
+# for each handler, it could be at one of several stages:
+
+# as sslocal:
+# stage 0 SOCKS hello received from local, send hello to local
+# stage 1 addr received from local, query DNS for remote
+# stage 2 UDP assoc
+# stage 3 DNS resolved, connect to remote
+# stage 4 still connecting, more data from local received
+# stage 5 remote connected, piping local and remote
+
+# as ssserver:
+# stage 0 just jump to stage 1
+# stage 1 addr received from local, query DNS for remote
+# stage 3 DNS resolved, connect to remote
+# stage 4 still connecting, more data from local received
+# stage 5 remote connected, piping local and remote
 
 STAGE_INIT = 0
-STAGE_HELLO = 1
+STAGE_ADDR = 1
 STAGE_UDP_ASSOC = 2
 STAGE_DNS = 3
-STAGE_REPLY = 4
+STAGE_CONNECTING = 4
 STAGE_STREAM = 5
 STAGE_DESTROYED = -1
 
-# stream direction
+# for each handler, we have 2 stream directions:
+#    upstream:    from client to server direction
+#                 read local and write to remote
+#    downstream:  from server to client direction
+#                 read remote and write to local
+
 STREAM_UP = 0
 STREAM_DOWN = 1
 
-# stream wait status
+# for each stream, it's waiting for reading, or writing, or both
 WAIT_STATUS_INIT = 0
 WAIT_STATUS_READING = 1
 WAIT_STATUS_WRITING = 2
@@ -87,6 +102,9 @@ class TCPRelayHandler(object):
         self._remote_sock = None
         self._config = config
         self._dns_resolver = dns_resolver
+
+        # TCP Relay works as either sslocal or ssserver
+        # if is_local, this is sslocal
         self._is_local = is_local
         self._stage = STAGE_INIT
         self._encryptor = encrypt.Encryptor(config['password'],
@@ -96,7 +114,12 @@ class TCPRelayHandler(object):
         self._data_to_write_to_remote = []
         self._upstream_status = WAIT_STATUS_READING
         self._downstream_status = WAIT_STATUS_INIT
+        self._client_address = local_sock.getpeername()[:2]
         self._remote_address = None
+        if 'forbidden_ip' in config:
+            self._forbidden_iplist = config['forbidden_ip']
+        else:
+            self._forbidden_iplist = None
         if is_local:
             self._chosen_server = self._get_a_server()
         fd_to_handlers[local_sock.fileno()] = self
@@ -120,14 +143,21 @@ class TCPRelayHandler(object):
         server_port = self._config['server_port']
         if type(server_port) == list:
             server_port = random.choice(server_port)
+        if type(server) == list:
+            server = random.choice(server)
         logging.debug('chosen server: %s:%d', server, server_port)
-        # TODO support multiple server IP
         return server, server_port
 
     def _update_activity(self):
+        # tell the TCP Relay we have activities recently
+        # else it will think we are inactive and timed out
         self._server.update_activity(self)
 
     def _update_stream(self, stream, status):
+        # update a stream to a new waiting status
+
+        # check if status is changed
+        # only update if dirty
         dirty = False
         if stream == STREAM_DOWN:
             if self._downstream_status != status:
@@ -154,6 +184,9 @@ class TCPRelayHandler(object):
                 self._loop.modify(self._remote_sock, event)
 
     def _write_to_sock(self, data, sock):
+        # write data to sock
+        # if only some of the data are written, put remaining in the buffer
+        # and update the stream to wait for writing
         if not data or not sock:
             return False
         uncomplete = False
@@ -169,9 +202,7 @@ class TCPRelayHandler(object):
                             errno.EWOULDBLOCK):
                 uncomplete = True
             else:
-                logging.error(e)
-                if self._config['verbose']:
-                    traceback.print_exc()
+                logging.exception(e, verbose=self._config['verbose'])
                 self.destroy()
                 return False
         if uncomplete:
@@ -192,43 +223,43 @@ class TCPRelayHandler(object):
                 logging.error('write_all_to_sock:unknown socket')
         return True
 
-    def _handle_stage_reply(self, data):
+    def _handle_stage_connecting(self, data):
         if self._is_local:
             data = self._encryptor.encrypt(data)
         self._data_to_write_to_remote.append(data)
         if self._is_local and not self._fastopen_connected and \
                 self._config['fast_open']:
+            # for sslocal and fastopen, we basically wait for data and use
+            # sendto to connect
             try:
+                # only connect once
                 self._fastopen_connected = True
                 remote_sock = \
                     self._create_remote_socket(self._chosen_server[0],
                                                self._chosen_server[1])
                 self._loop.add(remote_sock, eventloop.POLL_ERR)
-                data = b''.join(self._data_to_write_to_local)
+                data = b''.join(self._data_to_write_to_remote)
                 l = len(data)
                 s = remote_sock.sendto(data, MSG_FASTOPEN, self._chosen_server)
                 if s < l:
                     data = data[s:]
-                    self._data_to_write_to_local = [data]
-                    self._update_stream(STREAM_UP, WAIT_STATUS_READWRITING)
+                    self._data_to_write_to_remote = [data]
                 else:
-                    self._data_to_write_to_local = []
-                    self._update_stream(STREAM_UP, WAIT_STATUS_READING)
-                    self._stage = STAGE_STREAM
+                    self._data_to_write_to_remote = []
+                self._update_stream(STREAM_UP, WAIT_STATUS_READWRITING)
             except (OSError, IOError) as e:
                 if eventloop.errno_from_exception(e) == errno.EINPROGRESS:
+                    # in this case data is not sent at all
                     self._update_stream(STREAM_UP, WAIT_STATUS_READWRITING)
                 elif eventloop.errno_from_exception(e) == errno.ENOTCONN:
                     logging.error('fast open not supported on this OS')
                     self._config['fast_open'] = False
                     self.destroy()
                 else:
-                    logging.error(e)
-                    if self._config['verbose']:
-                        traceback.print_exc()
+                    logging.exception(e, verbose=self._config['verbose'])
                     self.destroy()
 
-    def _handle_stage_hello(self, data):
+    def _handle_stage_addr(self, data):
         try:
             if self._is_local:
                 cmd = common.ord(data[1])
@@ -258,9 +289,12 @@ class TCPRelayHandler(object):
             if header_result is None:
                 raise Exception('can not parse header')
             addrtype, remote_addr, remote_port, header_length = header_result
-            logging.info('connecting %s:%d' % (common.to_str(remote_addr),
-                                               remote_port))
-            self._remote_address = (remote_addr, remote_port)
+            logging.info('connecting %s:%d from %s:%d' %
+                         (common.to_str(remote_addr),
+                          remote_port,
+                          self._client_address[0],
+                          self._client_address[1]))
+            self._remote_address = (common.to_str(remote_addr), remote_port)
             # pause reading
             self._update_stream(STREAM_UP, WAIT_STATUS_WRITING)
             self._stage = STAGE_DNS
@@ -281,18 +315,19 @@ class TCPRelayHandler(object):
                 self._dns_resolver.resolve(remote_addr,
                                            self._handle_dns_resolved)
         except Exception as e:
-            logging.error(e)
-            if self._config['verbose']:
-                traceback.print_exc()
-            # TODO use logging when debug completed
+            self._log_error(e)
             self.destroy()
 
     def _create_remote_socket(self, ip, port):
         addrs = socket.getaddrinfo(ip, port, 0, socket.SOCK_STREAM,
                                    socket.SOL_TCP)
         if len(addrs) == 0:
-            raise Exception("getaddrinfo failed for %s:%d" % (ip,  port))
+            raise Exception("getaddrinfo failed for %s:%d" % (ip, port))
         af, socktype, proto, canonname, sa = addrs[0]
+        if self._forbidden_iplist:
+            if common.to_str(sa[0]) in self._forbidden_iplist:
+                raise Exception('IP %s is in forbidden list, reject' %
+                                common.to_str(sa[0]))
         remote_sock = socket.socket(af, socktype, proto)
         self._remote_sock = remote_sock
         self._fd_to_handlers[remote_sock.fileno()] = self
@@ -302,14 +337,15 @@ class TCPRelayHandler(object):
 
     def _handle_dns_resolved(self, result, error):
         if error:
-            logging.error(error)
+            self._log_error(error)
             self.destroy()
             return
         if result:
             ip = result[1]
             if ip:
+
                 try:
-                    self._stage = STAGE_REPLY
+                    self._stage = STAGE_CONNECTING
                     remote_addr = ip
                     if self._is_local:
                         remote_port = self._chosen_server[1]
@@ -317,11 +353,15 @@ class TCPRelayHandler(object):
                         remote_port = self._remote_address[1]
 
                     if self._is_local and self._config['fast_open']:
+                        # for fastopen:
                         # wait for more data to arrive and send them in one SYN
-                        self._stage = STAGE_REPLY
+                        self._stage = STAGE_CONNECTING
+                        # we don't have to wait for remote since it's not
+                        # created
                         self._update_stream(STREAM_UP, WAIT_STATUS_READING)
                         # TODO when there is already data in this packet
                     else:
+                        # else do connect
                         remote_sock = self._create_remote_socket(remote_addr,
                                                                  remote_port)
                         try:
@@ -332,17 +372,17 @@ class TCPRelayHandler(object):
                                 pass
                         self._loop.add(remote_sock,
                                        eventloop.POLL_ERR | eventloop.POLL_OUT)
-                        self._stage = STAGE_REPLY
+                        self._stage = STAGE_CONNECTING
                         self._update_stream(STREAM_UP, WAIT_STATUS_READWRITING)
                         self._update_stream(STREAM_DOWN, WAIT_STATUS_READING)
                     return
-                except (OSError, IOError) as e:
-                    logging.error(e)
-                    if self._config['verbose']:
-                        traceback.print_exc()
+                except Exception as e:
+                    logging.exception(e, verbose=self._config['verbose'])
         self.destroy()
 
     def _on_local_read(self):
+        # handle all local read events and dispatch them to methods for
+        # each stage
         self._update_activity()
         if not self._local_sock:
             return
@@ -369,15 +409,16 @@ class TCPRelayHandler(object):
         elif is_local and self._stage == STAGE_INIT:
             # TODO check auth method
             self._write_to_sock(b'\x05\00', self._local_sock)
-            self._stage = STAGE_HELLO
+            self._stage = STAGE_ADDR
             return
-        elif self._stage == STAGE_REPLY:
-            self._handle_stage_reply(data)
-        elif (is_local and self._stage == STAGE_HELLO) or \
+        elif self._stage == STAGE_CONNECTING:
+            self._handle_stage_connecting(data)
+        elif (is_local and self._stage == STAGE_ADDR) or \
                 (not is_local and self._stage == STAGE_INIT):
-            self._handle_stage_hello(data)
+            self._handle_stage_addr(data)
 
     def _on_remote_read(self):
+        # handle all remote read events
         self._update_activity()
         data = None
         try:
@@ -396,13 +437,11 @@ class TCPRelayHandler(object):
         try:
             self._write_to_sock(data, self._local_sock)
         except Exception as e:
-            logging.error(e)
-            if self._config['verbose']:
-                traceback.print_exc()
-            # TODO use logging when debug completed
+            logging.exception(e, verbose=self._config['verbose'])
             self.destroy()
 
     def _on_local_write(self):
+        # handle local writable event
         if self._data_to_write_to_local:
             data = b''.join(self._data_to_write_to_local)
             self._data_to_write_to_local = []
@@ -411,6 +450,7 @@ class TCPRelayHandler(object):
             self._update_stream(STREAM_DOWN, WAIT_STATUS_READING)
 
     def _on_remote_write(self):
+        # handle remote writable event
         self._stage = STAGE_STREAM
         if self._data_to_write_to_remote:
             data = b''.join(self._data_to_write_to_remote)
@@ -432,6 +472,7 @@ class TCPRelayHandler(object):
         self.destroy()
 
     def handle_event(self, sock, event):
+        # handle all events in this handler and dispatch them to methods
         if self._stage == STAGE_DESTROYED:
             logging.debug('ignore handle_event: destroyed')
             return
@@ -461,8 +502,21 @@ class TCPRelayHandler(object):
         else:
             logging.warn('unknown socket')
 
+    def _log_error(self, e):
+        logging.exception('%s when handling connection from %s:%d' %
+                          (e, self._client_address[0], self._client_address[1]),
+                          verbose=self._config['verbose'])
+
     def destroy(self):
+        # destroy the handler and release any resources
+        # promises:
+        # 1. destroy won't make another destroy() call inside
+        # 2. destroy releases resources so it prevents future call to destroy
+        # 3. destroy won't raise any exceptions
+        # if any of the promises are broken, it indicates a bug has been
+        # introduced! mostly likely memory leaks, etc
         if self._stage == STAGE_DESTROYED:
+            # this couldn't happen
             logging.debug('already destroyed')
             return
         self._stage = STAGE_DESTROYED
@@ -549,7 +603,7 @@ class TCPRelay(object):
             del self._handler_to_timeouts[hash(handler)]
 
     def update_activity(self, handler):
-        """ set handler to active """
+        # set handler to active
         now = int(time.time())
         if now - handler.last_activity < TIMEOUT_PRECISION:
             # thus we can lower timeout modification frequency
@@ -598,6 +652,7 @@ class TCPRelay(object):
             self._timeout_offset = pos
 
     def _handle_events(self, events):
+        # handle events and dispatch to handlers
         for sock, fd, event in events:
             if sock:
                 logging.debug('fd %d %s', fd,
@@ -618,9 +673,7 @@ class TCPRelay(object):
                                     errno.EWOULDBLOCK):
                         continue
                     else:
-                        logging.error(e)
-                        if self._config['verbose']:
-                            traceback.print_exc()
+                        logging.exception(e, verbose=self._config['verbose'])
             else:
                 if sock:
                     handler = self._fd_to_handlers.get(fd, None)

@@ -86,11 +86,12 @@ class Logging(type(sys)):
 
   def exception(self, fmt, *args, **kwargs):
     self.error(fmt, *args, **kwargs)
-    traceback.print_exc(file=sys.stderr)
+    if kwargs.get('verbose', False):
+      import traceback
+      traceback.print_exc()
 
   def critical(self, fmt, *args, **kwargs):
     self.__set_error_color()
     self.log('CRITICAL', fmt, *args, **kwargs)
     self.__reset_color()
-
 

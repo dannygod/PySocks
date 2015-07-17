@@ -1,25 +1,19 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-
-# Copyright (c) 2014 clowwindy
 #
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
+# Copyright 2015 clowwindy modified dannygod
 #
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
 #
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
 
 # SOCKS5 UDP Request
 # +----+------+------+----------+----------+----------+
@@ -65,24 +59,26 @@
 # `client`  means UDP clients that connects to other servers
 # `server`  means the UDP server that handles user requests
 
+from __future__ import absolute_import, division, print_function, \
+    with_statement
 
-import common
+import __init__
 import time
 import socket
 import struct
 import errno
 import random
-import eventloop
-import lru_cache
-from encrypt import encrypt
 
+from simplesocks import common, eventloop, encrypt, lru_cache
 logging = common.logging
+
 
 BUF_SIZE = 65536
 
 
-def client_key(a, b, c, d):
-    return '%s:%s:%s:%s' % (a, b, c, d)
+def client_key(source_addr, server_af):
+    # notice this is server af, not dest af
+    return '%s:%s:%d' % (source_addr[0], source_addr[1], server_af)
 
 
 class UDPRelay(object):
@@ -107,10 +103,15 @@ class UDPRelay(object):
                                          close_callback=self._close_client)
         self._client_fd_to_server_addr = \
             lru_cache.LRUCache(timeout=config['timeout'])
+        self._dns_cache = lru_cache.LRUCache(timeout=300)
         self._eventloop = None
         self._closed = False
         self._last_time = time.time()
         self._sockets = set()
+        if 'forbidden_ip' in config:
+            self._forbidden_iplist = config['forbidden_ip']
+        else:
+            self._forbidden_iplist = None
 
         addrs = socket.getaddrinfo(self._listen_addr, self._listen_port, 0,
                                    socket.SOCK_DGRAM, socket.SOL_UDP)
@@ -128,8 +129,9 @@ class UDPRelay(object):
         server_port = self._config['server_port']
         if type(server_port) == list:
             server_port = random.choice(server_port)
+        if type(server) == list:
+            server = random.choice(server)
         logging.debug('chosen server: %s:%d', server, server_port)
-        # TODO support multiple server IP
         return server, server_port
 
     def _close_client(self, client):
@@ -169,21 +171,33 @@ class UDPRelay(object):
         else:
             server_addr, server_port = dest_addr, dest_port
 
-        key = client_key(r_addr[0], r_addr[1], dest_addr, dest_port)
+        addrs = self._dns_cache.get(server_addr, None)
+        if addrs is None:
+            addrs = socket.getaddrinfo(server_addr, server_port, 0,
+                                       socket.SOCK_DGRAM, socket.SOL_UDP)
+            if not addrs:
+                # drop
+                return
+            else:
+                self._dns_cache[server_addr] = addrs
+
+        af, socktype, proto, canonname, sa = addrs[0]
+        key = client_key(r_addr, af)
+        logging.debug(key)
         client = self._cache.get(key, None)
         if not client:
             # TODO async getaddrinfo
-            addrs = socket.getaddrinfo(server_addr, server_port, 0,
-                                       socket.SOCK_DGRAM, socket.SOL_UDP)
-            if addrs:
-                af, socktype, proto, canonname, sa = addrs[0]
-                client = socket.socket(af, socktype, proto)
-                client.setblocking(False)
-                self._cache[key] = client
-                self._client_fd_to_server_addr[client.fileno()] = r_addr
-            else:
-                # drop
-                return
+            if self._forbidden_iplist:
+                if common.to_str(sa[0]) in self._forbidden_iplist:
+                    logging.debug('IP %s is in forbidden list, drop' %
+                                  common.to_str(sa[0]))
+                    # drop
+                    return
+            client = socket.socket(af, socktype, proto)
+            client.setblocking(False)
+            self._cache[key] = client
+            self._client_fd_to_server_addr[client.fileno()] = r_addr
+
             self._sockets.add(client.fileno())
             self._eventloop.add(client, eventloop.POLL_IN)
 
@@ -202,7 +216,7 @@ class UDPRelay(object):
             if err in (errno.EINPROGRESS, errno.EAGAIN):
                 pass
             else:
-                logging.error(e)
+                logging.exception(e)
 
     def _handle_client(self, sock):
         data, r_addr = sock.recvfrom(BUF_SIZE)

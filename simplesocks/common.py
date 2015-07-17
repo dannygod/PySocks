@@ -1,21 +1,22 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-# Copyright (c) 2014 dannygod
+# Copyright (c) 2015 dannygod
 
 from __future__ import absolute_import, division, print_function, \
     with_statement
 
+import __init__
 import os
 import socket
 import struct
 import sys
-from util import value_utils
-from util import logging_utils
+
+from simplesocks.util import value_utils, logging_utils
 
 logging = sys.modules['logging'] = logging_utils.Logging('logging')
 
-__version__ = '3.0.0'
+__version__ = '3.5.0'
 
 
 class Common(object):
@@ -30,26 +31,42 @@ class Common(object):
     self.LISTEN_IP = self.CONFIG['local']
     self.LISTEN_PORT = self.CONFIG['local_port']
     self.LISTEN_VISIBLE = self.CONFIG['visible']
-    self.LISTEN_VERBOSE = self.CONFIG['verbose'] if self.CONFIG.has_key('verbose') else 0
+    self.LISTEN_VERBOSE = self.CONFIG['verbose'] \
+        if self.CONFIG.has_key('verbose') else 0
 
     # server info
     self.SOCKS5_SERVER = self.CONFIG['server']
-    self.SOCKS5_SERVER_PORT = self.CONFIG['server_port']
-    self.SOCKS5_PASSWORD = self.CONFIG['password']
-    self.SOCKS5_ENCRYPT_METHOD = self.CONFIG['method']
+    self.SOCKS5_SERVER_PORT = self.CONFIG['remote_server_port']
+    self.SOCKS5_SERVER_METHOD = self.CONFIG['method']
 
     self.TIMEOUT = self.CONFIG['timeout']
 
     # app version
     self.VERSION = __version__
 
+    # check version
+    info = sys.version_info
+    if info[0] == 2 and not info[1] >= 6:
+      logging.critical('Python 2.6+ required')
+      sys.exit(1)
+    elif info[0] == 3 and not info[1] >= 3:
+      logging.critical('Python 3.3+ required')
+      sys.exit(1)
+    elif info[0] not in [2, 3]:
+      logging.critical('Python version not supported')
+      sys.exit(1)
+
   def info(self):
     info = ''
     info += '------------------------------------------------------\n'
-    info += 'SimpleSocks Version    : %s (python/%s)\n' % (self.VERSION, sys.version.partition(' ')[0])
-    info += 'Listen Address         : %s:%d\n' % (self.LISTEN_IP, self.LISTEN_PORT)
+    info += 'SimpleSocks Version    : %s (python/%s)\n' % (self.VERSION,
+                                                           sys.version.partition(' ')[0])
+    info += 'Listen Address         : %s:%d\n' % (self.LISTEN_IP,
+                                                  self.LISTEN_PORT)
     info += 'Verbose                : %s\n' % self.LISTEN_VERBOSE if self.LISTEN_VERBOSE else ''
-    info += 'SOCKS5 Server          : %s:%d\n' % (self.SOCKS5_SERVER, self.SOCKS5_SERVER_PORT)
+    info += 'SOCKS5 Server          : %s:%d\n' % (self.SOCKS5_SERVER,
+                                                  self.SOCKS5_SERVER_PORT)
+    info += 'Crypto                 : %s\n' % self.SOCKS5_SERVER_METHOD
     info += 'TimeOut                : %d\n' % self.TIMEOUT
     info += '------------------------------------------------------\n'
     return info
@@ -130,6 +147,18 @@ def inet_pton(family, addr):
     raise RuntimeError("What family?")
 
 
+def is_ip(address):
+  for family in (socket.AF_INET, socket.AF_INET6):
+    try:
+      if type(address) != str:
+        address = address.decode('utf8')
+      inet_pton(family, address)
+      return family
+    except (TypeError, ValueError, OSError, IOError):
+      pass
+  return False
+
+
 def patch_socket():
   if not hasattr(socket, 'inet_pton'):
     socket.inet_pton = inet_pton
@@ -201,6 +230,61 @@ def parse_header(data):
   return addrtype, to_bytes(dest_addr), dest_port, header_length
 
 
+class IPNetwork(object):
+  ADDRLENGTH = {socket.AF_INET: 32, socket.AF_INET6: 128, False: 0}
+  
+  def __init__(self, addrs):
+    self._network_list_v4 = []
+    self._network_list_v6 = []
+    if type(addrs) == str:
+      addrs = addrs.split(',')
+    list(map(self.add_network, addrs))
+  
+  def add_network(self, addr):
+    if addr is "":
+      return
+    block = addr.split('/')
+    addr_family = is_ip(block[0])
+    addr_len = IPNetwork.ADDRLENGTH[addr_family]
+    if addr_family is socket.AF_INET:
+      ip, = struct.unpack("!I", socket.inet_aton(block[0]))
+    elif addr_family is socket.AF_INET6:
+      hi, lo = struct.unpack("!QQ", inet_pton(addr_family, block[0]))
+      ip = (hi << 64) | lo
+    else:
+      raise Exception("Not a valid CIDR notation: %s" % addr)
+    if len(block) is 1:
+      prefix_size = 0
+      while (ip & 1) == 0 and ip is not 0:
+        ip >>= 1
+        prefix_size += 1
+      logging.warn("You did't specify CIDR routing prefix size for %s, "
+                   "implicit treated as %s/%d" % (addr, addr, addr_len))
+    elif block[1].isdigit() and int(block[1]) <= addr_len:
+      prefix_size = addr_len - int(block[1])
+      ip >>= prefix_size
+    else:
+      raise Exception("Not a valid CIDR notation: %s" % addr)
+    if addr_family is socket.AF_INET:
+      self._network_list_v4.append((ip, prefix_size))
+    else:
+      self._network_list_v6.append((ip, prefix_size))
+  
+  def __contains__(self, addr):
+    addr_family = is_ip(addr)
+    if addr_family is socket.AF_INET:
+      ip, = struct.unpack("!I", socket.inet_aton(addr))
+      return any(map(lambda n_ps: n_ps[0] == ip >> n_ps[1],
+                     self._network_list_v4))
+    elif addr_family is socket.AF_INET6:
+      hi, lo = struct.unpack("!QQ", inet_pton(addr_family, addr))
+      ip = (hi << 64) | lo
+      return any(map(lambda n_ps: n_ps[0] == ip >> n_ps[1],
+                     self._network_list_v6))
+    else:
+      return False
+
+
 def test_inet_conv():
   ipv4 = b'8.8.4.4'
   b = inet_pton(socket.AF_INET, ipv4)
@@ -227,7 +311,37 @@ def test_pack_header():
   assert pack_addr(b'www.google.com') == b'\x03\x0ewww.google.com'
 
 
+def test_ip_network():
+  ip_network = IPNetwork('127.0.0.0/24,::ff:1/112,::1,192.168.1.1,192.0.2.0')
+  assert '127.0.0.1' in ip_network
+  assert '127.0.1.1' not in ip_network
+  assert ':ff:ffff' in ip_network
+  assert '::ffff:1' not in ip_network
+  assert '::1' in ip_network
+  assert '::2' not in ip_network
+  assert '192.168.1.1' in ip_network
+  assert '192.168.1.2' not in ip_network
+  assert '192.0.2.1' in ip_network
+  assert '192.0.3.1' in ip_network  # 192.0.2.0 is treated as 192.0.2.0/23
+  assert 'www.google.com' not in ip_network
+
+
+def test_logging():
+  logging.debug('debug')
+  logging.info('info')
+  logging.warn('warn')
+  logging.error('error')
+  logging.critical('critical')
+  try:
+    raise Exception('exception')
+  except Exception as e:
+    logging.exception(e)
+    logging.exception(e, verbose=True)
+
+
 if __name__ == '__main__':
   test_inet_conv()
   test_parse_header()
   test_pack_header()
+  test_ip_network()
+  test_logging()
