@@ -77,8 +77,8 @@ def main():
   sys.stdout.write(common.info())
 
   config = common.get_config()
-  if config.has_key('port_password') and config['port_password']:
-    if config.has_key('password') and config['password']:
+  if 'port_password' in config and config['port_password']:
+    if 'password' in config and config['password']:
       logging.warn('warning: port_password should not be used with '
                    'server_port and password. server_port and password '
                    'will be ignored')

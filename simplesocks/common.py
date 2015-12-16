@@ -32,7 +32,7 @@ class Common(object):
     self.LISTEN_PORT = self.CONFIG['local_port']
     self.LISTEN_VISIBLE = self.CONFIG['visible']
     self.LISTEN_VERBOSE = self.CONFIG['verbose'] \
-        if self.CONFIG.has_key('verbose') else 0
+        if 'verbose' in self.CONFIG else 0
 
     # server info
     self.SOCKS5_SERVER = self.CONFIG['server']
